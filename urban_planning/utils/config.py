@@ -5,16 +5,29 @@ from typing import Text, Dict
 
 class Config:
 
+    # TODO: Text -> str (Text is deprecated)
     def __init__(self, cfg: Text, global_seed: int, tmp: bool, root_dir: Text,
                  agent: Text = 'rl-sgnn', cfg_dict: Dict = None):
         self.id = cfg
         self.seed = global_seed
+        # ? cfg_dict
         if cfg_dict is not None:
             cfg = cfg_dict
         else:
+            # '**' will match all files
             file_path = 'urban_planning/cfg/**/{}.yaml'.format(self.id)
             cfg = load_yaml(file_path)
         # create dirs
+        """folder structure
+        root_dir # DRL_urban_planning
+        └── id # hlg
+            └── seed # 111
+                ├── models
+                ├── log
+                ├── tb
+                └── plan
+        """
+        # TODO: reset root_dir
         self.root_dir = '/tmp/urban_planning' if tmp else root_dir
 
         self.cfg_dir = os.path.join(self.root_dir, self.id, str(self.seed))

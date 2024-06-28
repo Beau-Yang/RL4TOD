@@ -44,10 +44,11 @@ def reward_info_function(
     concept_weight: float = 0.0,
     weight_by_area: bool = False) -> Tuple[float, Dict]:
     """Returns the RL reward and info.
-
     Args:
         plc: Plan client object.
         name: Reward name, can be land_use, road, or intermediate.
+        # reward is only calculated at the last step of each stage
+        # intermediate steps receive a reward of 0
         road_network_weight:  Weight of road network in the reward function.
         life_circle_weight: Weight of 15-min life circle in the reward function.
         greenness_weight: Weight of greenness in the reward function.
@@ -58,7 +59,24 @@ def reward_info_function(
         The RL reward.
         Info dictionary.
     """
+
+    # road_network_weight = 0
+    # life_circle_weight = 4
+    # greenness_weight = 1
+    # concept_weight = 0
+    # weight_by_area = False
+
+    # INTERMEDIATE_REWARD = 0.0
     proxy_reward = CityEnv.INTERMEDIATE_REWARD
+
+    """
+    if (self._stage == 'land_use') or (self._stage == 'road' and self._road_steps > 0):
+        return self._reward_info_fn(self._plc, 'intermediate')
+    elif self._stage == 'road' and self._road_steps == 0:
+        return self._reward_info_fn(self._plc, 'land_use')
+    elif self._stage == 'done':
+        return self._reward_info_fn(self._plc, 'road')
+    """
 
     if name == 'intermediate':
         return proxy_reward, {
@@ -68,6 +86,7 @@ def reward_info_function(
             'concept': -1.0,
         }
     elif name == 'road':
+        # compute the reward of the road stage
         proxy_reward = 0.0
         road_network = -1.0
         road_network_info = dict()
@@ -82,6 +101,7 @@ def reward_info_function(
             'road_network_info': road_network_info
         }
     elif name == 'land_use':
+        # compute the reward of the land use stage
         proxy_reward = 0.0
         life_circle = -1.0
         greenness = -1.0
@@ -118,6 +138,9 @@ class CityEnv:
     FAILURE_REWARD = -1.0
     INTERMEDIATE_REWARD = 0.0
 
+    # callable - functions 
+    # Callable[[int], str] signifies a function that takes a single parameter of type int and returns a str
+    # ?: PlanClient
     def __init__(self,
                  cfg: Config,
                  is_eval: bool = False,
@@ -127,8 +150,10 @@ class CityEnv:
         self._is_eval = is_eval
         self._frozen = False
         self._action_history = []
+        # default: objectives_hlg, init_plan_hlg
         self._plc = PlanClient(cfg.objectives_plan, cfg.init_plan)
 
+        # partial: freeze some portion of a function's arguments to make calling functions easier
         self._reward_info_fn = partial(reward_info_fn,
                                        road_network_weight=cfg.reward_specs.get('road_network_weight', 1.0),
                                        life_circle_weight=cfg.reward_specs.get('life_circle_weight', 1.0),
@@ -149,6 +174,7 @@ class CityEnv:
         """
         Set the stage.
         """
+        # TODO
         self._land_use_steps = 0
         self._road_steps = 0
         if not self.cfg.skip_land_use:
@@ -268,6 +294,7 @@ class CityEnv:
         Returns:
             feature_size (int): the feature size.
         """
+        # 4 * NUM_TYPES
         return self._observation_extractor.get_numerical_feature_size()
 
     def get_node_dim(self):
@@ -288,6 +315,7 @@ class CityEnv:
             land_use (dictionary): the dummy land use.
         """
         dummy_land_use = dict()
+        # city_config.FEASIBLE: 1
         dummy_land_use['type'] = city_config.FEASIBLE
         dummy_land_use['x'] = 0.5
         dummy_land_use['y'] = 0.5
@@ -312,6 +340,8 @@ class CityEnv:
             land_use = self._get_dummy_land_use()
             mask = np.zeros(self.cfg.state_encoder_specs['max_num_edges'], dtype=bool)
         else:
+            # land_use: dict ['type', 'x', 'y', 'area', 'length', 'width', 'height', 'rect', 'eqi', 'sc']
+            # mask: (graph_num_edge,)
             land_use, mask = self._plc.get_current_land_use_and_mask()
         return land_use, mask
 
@@ -323,6 +353,7 @@ class CityEnv:
             mask (np.ndarray): the current mask.
         """
         if self._stage == 'land_use':
+            # (Max_Num_Nodes,)
             mask = np.zeros(self.cfg.state_encoder_specs['max_num_nodes'], dtype=bool)
         else:
             mask = self._plc.get_current_road_mask()
@@ -344,6 +375,10 @@ class CityEnv:
         Returns:
             observation (object): the observation
         """
+        # land_use: dict ['type', 'x', 'y', 'area', 'length', 'width', 'height', 'rect', 'eqi', 'sc']
+        # land_use_mask: (graph_num_edge,)
+        # road_mask: (Max_Num_Nodes,)
+        # _get_stage_obs: int
         return self._observation_extractor.get_obs(self._current_land_use,
                                                    self._current_land_use_mask,
                                                    self._current_road_mask,
@@ -439,7 +474,8 @@ class CityEnv:
         """
         if self._done:
             raise RuntimeError('Action taken after episode is done.')
-
+        
+ 
         if self._stage == 'land_use':
             land_use = self._current_land_use
             action = int(action[0])
@@ -459,16 +495,23 @@ class CityEnv:
             self._land_use_steps += 1
             land_use_done = self._plc.is_land_use_done()
             if land_use_done:
+                # fill the remaining space
+                # copy current gdf
+                # change 'stage'
                 self.fill_leftover()
                 self._cached_land_use_gdf = self.snapshot_land_use()
                 self.transition_stage()
+            
+            # info: road_network, life_circle, greenness, concept
             reward, info = self.get_reward_info()
             self._current_land_use, self._current_land_use_mask = self._get_land_use_and_mask()
             if not self._land_use_done and not np.any(self._current_land_use_mask):
                 return self.failure_step('Actions took before becoming infeasible', logger)
             self._current_road_mask = self._get_road_mask()
+            # if the land use is finised
             if self._stage != 'land_use':
                 self._cached_land_use_reward = reward
+                # if not skip road stage
                 if self._stage == 'road':
                     if not np.any(self._current_road_mask):
                         return self.failure_step('Actions took before becoming infeasible', logger)
@@ -533,7 +576,10 @@ class CityEnv:
         self._set_stage()
         self._done = False
         self._set_cached_reward_info()
+        # land_use: dict ['type', 'x', 'y', 'area', 'length', 'width', 'height', 'rect', 'eqi', 'sc']
+        # land_use_mask: (graph_num_edge,)
         self._current_land_use, self._current_land_use_mask = self._get_land_use_and_mask()
+        # road_mask: (Max_Num_Nodes,)
         self._current_road_mask = self._get_road_mask()
         if self.cfg.skip_land_use:
             self._compute_total_road_steps()

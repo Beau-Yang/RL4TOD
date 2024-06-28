@@ -3,14 +3,21 @@ from khrylib.utils import batch_to
 
 
 def estimate_advantages(rewards, masks, values, gamma, tau, normalize_rewards=False):
+    # rewards: [batch_]
+    # masks: [batch_]
+    # values: [batch_, 1]
+    # gamma: 1
+    # tau: 0
     device = rewards.device
     rewards, masks, values = batch_to(torch.device('cpu'), rewards, masks, values)
     tensor_type = type(rewards)
+    # deltas, advantages = [batch_, 1]
     deltas = tensor_type(rewards.size(0), 1)
     advantages = tensor_type(rewards.size(0), 1)
 
     prev_value = 0
     prev_advantage = 0
+    # batch_-1, batch_-2, ..., 0
     for i in reversed(range(rewards.size(0))):
         deltas[i] = rewards[i] + gamma * prev_value * masks[i] - values[i]
         advantages[i] = deltas[i] + gamma * tau * prev_advantage * masks[i]
@@ -23,4 +30,5 @@ def estimate_advantages(rewards, masks, values, gamma, tau, normalize_rewards=Fa
         advantages = (advantages - advantages.mean()) / advantages.std()
 
     advantages, returns = batch_to(device, advantages, returns)
+    # [batch_, 1], [batch_, 1]
     return advantages, returns

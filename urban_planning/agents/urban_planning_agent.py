@@ -51,7 +51,27 @@ class UrbanPlanningAgent(AgentPPO):
         memory = Memory()
         logger = self.logger_cls(**self.logger_kwargs)
 
+        """
+        when (num_steps < num_samples) do loop:
+            # every time is a sample trial
+            every time initilize the state, logger_messages and memory_messages
+            for loop to step forward
+                every step: choose action according to the current state
+                every step: get (next state, reward, info)
+                every step: logger_messages add new message
+                every step: memory_messages
+                if done, break
+            if done
+                episode_len = 0
+                for every step:
+                    every step: episode_len += 1
+                    evert step: memory stores the memory_messages
+                num_steps += episode_len
+
+        note: every time the num_steps will grow equal to the value of the number of steps
+        """
         while logger.num_steps < num_samples:
+            # (4*NUM_TYPES,) (Max_Num_Nodes, NUM_TYPES+10) (Max_Num_Edges, 2) (NUM_TYPES+10,) (Max_Num_Nodes,) (Max_Num_Edges,) (Max_Num_Edges,) (Max_Num_Nodes,) (3,)
             state = self.env.reset()
 
             last_info = dict()
@@ -59,9 +79,14 @@ class UrbanPlanningAgent(AgentPPO):
             logger_messages = []
             memory_messages = []
             for t in range(10000):
+                # tensor: [state] == 
+                # [[4*NUM_TYPES, (Max_Num_Nodes, NUM_TYPES+10), (Max_Num_Edges, 2), NUM_TYPES+10, Max_Num_Nodes, Max_Num_Edges, Max_Num_Edges, Max_Num_Nodes, 3]]
                 state_var = tensorfy([state])
+                # false
                 use_mean_action = mean_action or torch.bernoulli(torch.tensor([1 - self.noise_rate])).item()
+                # (2,)
                 action = self.policy_net.select_action(state_var, use_mean_action).numpy().squeeze(0)
+                # self._get_obs(), reward, self._done, info
                 next_state, reward, done, info = self.env.step(action, self.thread_loggers[pid])
                 # cache logging
                 logger_messages.append([reward, info])
@@ -77,13 +102,21 @@ class UrbanPlanningAgent(AgentPPO):
                     break
                 state = next_state
 
+            # in every episode (t loop), if the agent reaches the final successfully, 
+            # accumulate the episode_len
             if episode_success:
+                # episode_len = 0
                 logger.start_episode(self.env)
                 for var in range(len(logger_messages)):
+                    # self.episode_len += 1
                     logger.step(self.env, *logger_messages[var])
                     self.push_memory(memory, *memory_messages[var])
+                # self.num_steps += self.episode_len
+                # self.num_episodes += 1
                 logger.end_episode(last_info)
                 self.thread_loggers[pid].info('worker {} finished episode {}.'.format(pid, logger.num_episodes))
+                # print(logger.num_steps)
+                # print(len(logger_messages), len(memory_messages), t + 1)
 
         if queue is not None:
             queue.put([pid, memory, logger])
@@ -92,7 +125,9 @@ class UrbanPlanningAgent(AgentPPO):
             
     def setup_env(self):
         self.env = env = CityEnv(self.cfg)
+        # 4 * NUM_TYPES
         self.numerical_feature_size = env.get_numerical_feature_size()
+        # len(LAND_USE_ID)+10
         self.node_dim = env.get_node_dim()
 
     def setup_logger(self, num_threads):
@@ -116,6 +151,7 @@ class UrbanPlanningAgent(AgentPPO):
 
     def setup_model(self):
         cfg = self.cfg
+        # default: rl-sgnn
         if cfg.agent == 'rl-sgnn':
             self.policy_net, self.value_net = create_sgnn_model(cfg, self)
             self.actor_critic_net = ActorCritic(self.policy_net, self.value_net)
@@ -144,6 +180,7 @@ class UrbanPlanningAgent(AgentPPO):
 
     def setup_optimizer(self):
         cfg = self.cfg
+         # default: rl-sgnn
         if cfg.agent in ['rl-sgnn', 'rl-mlp']:
             self.optimizer = torch.optim.Adam(self.actor_critic_net.parameters(), lr=cfg.lr,
                                               eps=cfg.eps, weight_decay=cfg.weightdecay)
@@ -152,6 +189,7 @@ class UrbanPlanningAgent(AgentPPO):
 
     def load_checkpoint(self, checkpoint, restore_best_rewards):
         cfg = self.cfg
+        # TODO: format
         if isinstance(checkpoint, int):
             cp_path = '%s/iteration_%04d.p' % (cfg.model_dir, checkpoint)
         else:
@@ -227,7 +265,17 @@ class UrbanPlanningAgent(AgentPPO):
     def optimize_policy(self, iteration):
         """generate multiple trajectories that reach the minimum batch_size"""
         t0 = time.time()
+        # ? meaning
+        # 500*50=25000
+
         num_samples = self.cfg.num_episodes_per_iteration*self.cfg.max_sequence_length
+        # num_samples = 500
+
+        # states: list [(9), ...] len=batch_
+        # actions: nparray (batch_, 2)
+        # rewards: nparray (batch_,)
+        # masks: nparray (batch_,)
+        # exps: nparray (batch_,)
         batch, log = self.sample(num_samples)
 
         """update networks"""
@@ -248,22 +296,35 @@ class UrbanPlanningAgent(AgentPPO):
     def update_params(self, batch, iteration):
         t0 = time.time()
         to_train(*self.update_modules)
+        # states: list [(9), ...] len=batch_
+        # actions: [batch_, 2]
+        # rewards: [batch_]
+        # masks: [batch_]
+        # exps: [batch_]
+
+        # one will include multiple trials 
         states = batch.states
         actions = torch.from_numpy(batch.actions).to(self.dtype)
         rewards = torch.from_numpy(batch.rewards).to(self.dtype)
         masks = torch.from_numpy(batch.masks).to(self.dtype)
         exps = torch.from_numpy(batch.exps).to(self.dtype)
+
         with to_test(*self.update_modules):
             with torch.no_grad():
                 values = []
+                # chunk: 256
                 chunk = self.cfg.mini_batch_size
                 for i in range(0, len(states), chunk):
+                    # divide all samples into chunks (i.e. batch)
                     states_i = tensorfy(states[i:min(i + chunk, len(states))], self.device)
+                    # value_i: [chunk, 1]
                     values_i = self.value_net(self.trans_value(states_i))
                     values.append(values_i.cpu())
+                # values: [batch_, 1]
                 values = torch.cat(values)
 
         """get advantage estimation from the trajectories"""
+        # [batch_, 1], [batch_, 1]
         advantages, returns = estimate_advantages(rewards, masks, values, self.gamma, self.tau)
 
         self.update_policy(states, actions, returns, advantages, exps, iteration)
@@ -280,6 +341,12 @@ class UrbanPlanningAgent(AgentPPO):
 
     def update_policy(self, states, actions, returns, advantages, exps, iteration):
         """update policy"""
+        # states: list [(9), ...] len=batch_
+        # actions: [batch_, 2]
+        # returns: [batch_, 1]
+        # advantages: [batch_, 1]
+        # exps: [batch_]
+        # iteration: int
         with to_test(*self.update_modules):
             with torch.no_grad():
                 fixed_log_probs = []
@@ -287,6 +354,7 @@ class UrbanPlanningAgent(AgentPPO):
                 for i in range(0, len(states), chunk):
                     states_i = tensorfy(states[i:min(i + chunk, len(states))], self.device)
                     actions_i = actions[i:min(i + chunk, len(states))].to(self.device)
+                    # [chunk, 1]
                     fixed_log_probs_i, _ = self.policy_net.get_log_prob_entropy(self.trans_policy(states_i), actions_i)
                     fixed_log_probs.append(fixed_log_probs_i.cpu())
                 fixed_log_probs = torch.cat(fixed_log_probs)
@@ -297,6 +365,7 @@ class UrbanPlanningAgent(AgentPPO):
         total_value_loss = 0.0
         total_surr_loss = 0.0
         total_entropy_loss = 0.0
+        # opt_num_epochs: 4
         for epoch in range(self.opt_num_epochs):
             epoch_loss = 0.0
             epoch_value_loss = 0.0

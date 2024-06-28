@@ -37,9 +37,11 @@ class to_device:
         for x in self.models:
             x.to(device)
 
+    # with statement will bind this method's return value (if any) to the target
     def __enter__(self):
         pass
 
+    # if an exception is raised, the additional processing will be performed
     def __exit__(self, *args):
         for x, device in zip(self.models, self.prev_devices):
             x.to(device)

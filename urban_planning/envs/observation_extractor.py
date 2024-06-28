@@ -32,9 +32,11 @@ class ObservationExtractor:
         Returns:
             obs_numerical (np.ndarray): the numerical observation.
         """
+        # len: NUM_TYPES = len(LAND_USE_ID) = 13
         required_plan_ratio, required_plan_count = self._plc.get_requirements()
         self.max_required_plan_count = required_plan_count.max()
         normalized_required_plan_count = required_plan_count / self.max_required_plan_count
+        # (2 * NUM_TYPES,)
         self._obs_static = np.concatenate([required_plan_ratio, normalized_required_plan_count])
 
     def _get_obs_numerical(self) -> np.ndarray:
@@ -44,8 +46,10 @@ class ObservationExtractor:
         Returns:
             obs_numerical (np.ndarray): the numerical observation.
         """
+        # (NUM_TYPES,)
         plan_ratio, plan_count = self._plc.get_plan_ratio_and_count()
         normalized_plan_count = plan_count / self.max_required_plan_count
+        # (4*NUM_TYPES,)
         obs_numerical = np.concatenate([self._obs_static, plan_ratio, normalized_plan_count], dtype=np.float32)
         return obs_numerical
 
@@ -106,29 +110,44 @@ class ObservationExtractor:
             obs_node_mask (np.ndarray): the node mask observation.
             obs_edge_mask (np.ndarray): the edge mask observation.
         """
+        # GDF_NUM: 269; NUM_TYPES: 13
+        # (GDF_NUM,) (GDF_NUM, 2) (GDF_NUM,) (GDF_NUM,) (GDF_NUM,) (GDF_NUM,) (GDF_NUM, 3) (graph_num_edge, 2)
         node_type, node_coordinates, node_area, node_length, node_width, node_height, node_domain, edges \
             = self._plc.get_graph_features()
         # transform node type to one-hot encoding
+        # (GDF_NUM,) -> (GDF_NUM, NUM_TYPES+1)
         node_type = np.eye(city_config.NUM_TYPES + 1)[node_type]
+        # (GDF_NUM, 2)
         node_coordinates = 2 * node_coordinates - 1
+        # (GDF_NUM,) -> (GDF_NUM, 1)
         node_area = 2 * np.expand_dims(node_area, axis=1)/self._max_area - 1
         node_length = 2 * np.expand_dims(node_length, axis=1)/self._max_edge_length - 1
         node_width = 2 * np.expand_dims(node_width, axis=1)/self._max_edge_length - 1
         node_height = 2 * np.expand_dims(node_height, axis=1)/self._max_edge_length - 1
+        # (GDF_NUM, 3)
         node_domain = 2 * node_domain - 1
+        # (GDF_NUM, NUM_TYPES+10) <- (GDF_NUM, NUM_TYPES+1+2+1+1+1+1+3) == (269, 23)
         obs_nodes = np.concatenate(
             [node_type, node_coordinates, node_area, node_length, node_width, node_height, node_domain],
             axis=-1, dtype=np.float32)
 
+        # (GDF_NUM,) -> (Max_Num_Nodes,)
+        # front, feasible: True; end, infeasible: False
         obs_node_mask = np.full(obs_nodes.shape[0], True)
         obs_node_mask = self._pad_mask(obs_node_mask, self._max_num_nodes, 'nodes')
 
+        # (graph_num_edge,) -> (Max_Num_Edges,)
         obs_edge_mask = np.full(edges.shape[0], True)
         obs_edge_mask = self._pad_mask(obs_edge_mask, self._max_num_edges, 'edges')
 
+        # (GDF_NUM, NUM_TYPES+10) -> (Max_Num_Nodes, NUM_TYPES+10)
+        # front, feasible; end, infeasible: 0
         obs_nodes = self._pad_nodes(obs_nodes)
+        # (graph_num_edge, 2) -> (Max_Num_Edges, 2)
+        # front, feasible; end, infeasible: Max_Num_Nodes - 1
         obs_edges = self._pad_edges(edges)
 
+        # (Max_Num_Nodes, NUM_TYPES+10) (Max_Num_Edges, 2) (Max_Num_Nodes,) (Max_Num_Edges,)
         return obs_nodes, obs_edges, obs_node_mask, obs_edge_mask
 
     def _get_obs_current_node(self, land_use: Dict) -> np.ndarray:
@@ -141,17 +160,22 @@ class ObservationExtractor:
         Returns:
             obs_current_node (np.ndarray): the current node observation.
         """
+        # ? node_type: one-hot vector (len(LAND_USE_ID)+1,)
         node_type = np.eye(city_config.NUM_TYPES + 1)[land_use['type']]
+        # node_coordinates: (2,)
         node_coordinates = 2*np.array([land_use['x'], land_use['y']]) - 1
+        # node_area_length_width_height: (4,)
         node_area_length_width_height = np.array(
             [2*land_use['area']/self._max_area - 1,
              2*land_use['length']/self._max_edge_length - 1,
              2*land_use['width']/self._max_edge_length - 1,
              2*land_use['height']/self._max_edge_length - 1])
+        # node_domain: (3,)
         node_domain = np.array(
             [2*land_use['rect'] - 1,
              2*land_use['eqi'] - 1,
              2*land_use['sc'] - 1])
+        # obs_current_node: (len(LAND_USE_ID)+1+2+4+3,) => (len(LAND_USE_ID)+10,)
         obs_current_node = np.concatenate([node_type, node_coordinates, node_area_length_width_height, node_domain],
                                           dtype=np.float32)
         return obs_current_node
@@ -190,6 +214,7 @@ class ObservationExtractor:
         Returns:
             feature_size (int): the feature size.
         """
+        # 2 * NUM_TYPES * 2 -> 4 * NUM_TYPES
         return self._obs_static.size*2
 
     def get_node_dim(self, land_use: Dict) -> int:
@@ -209,20 +234,33 @@ class ObservationExtractor:
         Returns the observation.
 
         Args:
-            land_use (dictionary): the current land use.
-            land_use_mask (np.ndarray): the current land_use mask.
-            road_mask (np.ndarray): the current road mask.
+            land_use (dictionary): the current land use. ['type', 'x', 'y', 'area', 'length', 'width', 'height', 'rect', 'eqi', 'sc']
+            land_use_mask (np.ndarray): the current land_use mask. (graph_num_edge,)
+            road_mask (np.ndarray): the current road mask. (Max_Num_Nodes,)
             stage (int): the current stage.
 
         Returns:
             obs (list): the observation.
         """
+        # (4*NUM_TYPES,)
         obs_numerical = self._get_obs_numerical()
+        # (Max_Num_Nodes, NUM_TYPES+10) (Max_Num_Edges, 2) (Max_Num_Nodes,) (Max_Num_Edges,)
         obs_nodes, obs_edges, obs_node_mask, obs_edge_mask = self._get_obs_graph()
+        # (NUM_TYPES+10,)
         obs_current_node = self._get_obs_current_node(land_use)
+        # (Max_Num_Edges,)
+        # - land use mark
+        # - padding
         obs_land_use_mask = self._get_obs_mask(land_use_mask, self._max_num_edges, 'edges')
+        # (Max_Num_Nodes,)
+        # - road mask
+        # - padding
         obs_road_mask = self._get_obs_mask(road_mask, self._max_num_nodes, 'nodes')
+        # (3,)
         stage = self._get_obs_stage(stage)
+
+        # (4*NUM_TYPES,) (Max_Num_Nodes, NUM_TYPES+10) (Max_Num_Edges, 2) (NUM_TYPES+10,) (Max_Num_Nodes,) (Max_Num_Edges,)
+        # (Max_Num_Edges,) (Max_Num_Nodes,) (3,)
         obs = [obs_numerical, obs_nodes, obs_edges, obs_current_node, obs_node_mask, obs_edge_mask,
                obs_land_use_mask, obs_road_mask, stage]
         return obs

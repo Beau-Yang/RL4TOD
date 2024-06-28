@@ -6,9 +6,14 @@ import math
 import time
 import os
 import platform
+
+# Unix-like systems use "fork" to start child process by default while Window systems use "spawn"
+# fork: the child process inherits all the resources of the parent process
+# spawn: the child process only inherits part of the resources
 if platform.system() != "Linux":
     from multiprocessing import set_start_method
     set_start_method("fork")
+# only use 1 thread
 os.environ["OMP_NUM_THREADS"] = "1"
 
 
@@ -65,6 +70,8 @@ class Agent:
             return memory, logger
 
     def seed_worker(self, pid):
+        # ?: not sure: generate a random number and multiply it by the process id (pid?)
+        # ?: to ensure that the random seed is not the same for each process
         if pid > 0:
             torch.manual_seed(torch.randint(0, 5000, (1,)) * pid)
             np.random.seed(np.random.randint(5000) * pid)
@@ -93,6 +100,8 @@ class Agent:
                     pid, worker_memory, worker_logger = queue.get()
                     memories[pid] = worker_memory
                     loggers[pid] = worker_logger
+                # memories: [memory1, memory2, ...]
+                # loggers: [logger1, logger2, ...]
                 traj_batch = self.traj_cls(memories)
                 logger = self.logger_cls.merge(loggers, **self.logger_kwargs)
 

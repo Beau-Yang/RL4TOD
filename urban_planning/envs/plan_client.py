@@ -21,16 +21,19 @@ from khrylib.utils import set_land_use_array_from_dict
 
 class PlanClient(object):
     """Defines the PlanClient class."""
+    # value of the PLAN_ORDER: ID of the type
+    # order of the PLAN_ORDER: plan order
     PLAN_ORDER = np.array([
-        city_config.HOSPITAL_L,
+        city_config.HOSPITAL_L,  # hospital
         city_config.SCHOOL,
-        city_config.HOSPITAL_S,
+        city_config.HOSPITAL_S,  # clinic
         city_config.RECREATION,
         city_config.RESIDENTIAL,
-        city_config.GREEN_L,
+        city_config.GREEN_L,     # park
         city_config.OFFICE,
         city_config.BUSINESS,
-        city_config.GREEN_S], dtype=np.int32)
+        city_config.GREEN_S],    # open space
+        dtype=np.int32)
     EPSILON = 1E-4
     DEG_TOL = 1
     SNAP_EPSILON = 1
@@ -43,9 +46,13 @@ class PlanClient(object):
             init_plan_file: Path to the file of initial plan.
         """
         file_path = 'urban_planning/cfg/**/{}.yaml'.format(objectives_plan_file)
+        # urban_planning/cfg/test_data/real/hlg/objectives_hlg.yaml
+        # required number and area of different functionalities
         self.objectives = load_yaml(file_path)
         file_path = 'urban_planning/cfg/**/{}.pickle'.format(init_plan_file)
+        # urban_planning/cfg/test_data/real/hlg/init_plan_hlg.pickle
         self.init_plan = load_pickle(file_path)
+        # print(self.init_plan["gdf"])
         self.init_objectives()
         self.init_constraints()
         self.restore_plan()
@@ -66,8 +73,13 @@ class PlanClient(object):
         if custom_planning_order:
             self._plan_order = land_use_to_plan
         else:
+            # default
+            # sort the land types to be used
             self._plan_order = self.PLAN_ORDER[np.isin(self.PLAN_ORDER, land_use_to_plan)]
 
+        # self._required_plan_ratio, self._required_plan_count
+        # - order: city_config.LAND_USE_ID_MAP
+        # - value: requirement (ratio / count)
         self._required_plan_ratio = np.zeros(city_config.NUM_TYPES, dtype=np.float32)
         required_plan_ratio = objectives['objectives']['ratio']
         set_land_use_array_from_dict(self._required_plan_ratio, required_plan_ratio, city_config.LAND_USE_ID_MAP)
@@ -89,6 +101,8 @@ class PlanClient(object):
         Args:
             constraints: Constraints of specific land uses.
         """
+        # - order: city_config.LAND_USE_ID_MAP
+        # - value: constraints
         self._required_max_area = np.zeros(city_config.NUM_TYPES, dtype=np.float32)
         required_max_area = constraints['max_area']
         set_land_use_array_from_dict(self._required_max_area, required_max_area, city_config.LAND_USE_ID_MAP)
@@ -126,6 +140,7 @@ class PlanClient(object):
 
     def _add_domain_features(self) -> None:
         """Adds domain features to the gdf."""
+        #? calculate the rectangularity / equivalent rectangular index / compactness index of each object
         self._gdf['rect'] = momepy.Rectangularity(self._gdf[self._gdf.geom_type == 'Polygon']).series
         self._gdf['eqi'] = momepy.EquivalentRectangularIndex(self._gdf[self._gdf.geom_type == 'Polygon']).series
         self._gdf['sc'] = momepy.SquareCompactness(self._gdf[self._gdf.geom_type == 'Polygon']).series
@@ -162,6 +177,7 @@ class PlanClient(object):
 
     def _init_stats(self) -> None:
         """Initialize statistics of the plan."""
+        # gdf: all records where existence is True in self._gdf
         gdf = self._gdf[self._gdf['existence'] == True]
         total_area = gdf.area.sum()*self._cell_area
         outside_area = gdf[gdf['type'] == city_config.OUTSIDE].area.sum()*self._cell_area
@@ -256,6 +272,7 @@ class PlanClient(object):
                    Nodes are land_use, road intersections and road segments. Edges are spatial contiguity.
         """
         gdf = copy.deepcopy(self._gdf[self._gdf['existence'] == True])
+        # calculate the fuzzy contiguity spatial weights
         w = libpysal.weights.fuzzy_contiguity(gdf)
         graph = w.to_networkx()
         self._current_gdf = gdf
@@ -296,8 +313,11 @@ class PlanClient(object):
             edge_mask: edge mask of the graph.
         """
         gdf, graph = self._get_current_gdf_and_graph()
+        # (graph_num_edge, 2)
         current_graph_edges = np.array(graph.edges)
+        # (GDF_NUM,)
         current_graph_nodes_id = gdf.index.to_numpy()
+        # (graph_num_edge, 2)
         self._current_graph_edges_with_id = current_graph_nodes_id[current_graph_edges]
 
         feasible_blocks_id = gdf[
@@ -308,6 +328,7 @@ class PlanClient(object):
         if self._rule_constraints:
             feasible_blocks_id = self._filter_block_by_rule(gdf, feasible_blocks_id, land_use_type)
 
+        # (graph_num_edge,)
         edge_mask = np.logical_or(
             np.logical_and(
                 np.isin(self._current_graph_edges_with_id[:, 0], feasible_blocks_id),
@@ -329,10 +350,14 @@ class PlanClient(object):
             mask: current mask.
         """
         land_use = dict()
+        # compute remaining_plan_area and plan_count (order: plan_order)
         remaining_plan_area = (self._required_plan_area - self._plan_area)[self._plan_order]
         remaining_plan_count = (self._required_plan_count - self._plan_count)[self._plan_order]
+        # EPSILON = 1E-4
+        # find the first land use type in the plan order that does not fulfil the requirement
         land_use_type = self._plan_order[np.logical_or(remaining_plan_area > self.EPSILON, remaining_plan_count > 0)][0]
         land_use['type'] = land_use_type
+        # (graph_num_edge,)
         mask = self._get_graph_edge_mask(land_use_type)
         land_use['x'] = 0.5
         land_use['y'] = 0.5
@@ -809,6 +834,8 @@ class PlanClient(object):
             6. node height: the height of the nodes.
             7. edges: the adjacency list.
         """
+        # GDF_NUM: filtered by self._gdf[self._gdf['existence'] == True]
+        # (269, 6)
         gdf = self._current_gdf
         graph = self._current_graph
         node_type = gdf['type'].to_numpy(dtype=np.int32)
@@ -821,7 +848,7 @@ class PlanClient(object):
         node_domain = self._get_domain_features(gdf)
 
         edges = np.array(graph.edges)
-
+        # (GDF_NUM,) (GDF_NUM, 2) (GDF_NUM,) (GDF_NUM,) (GDF_NUM,) (GDF_NUM,) (GDF_NUM, 3) (graph_num_edge, 2)
         return node_type, node_coordinates, node_area, node_length, node_width, node_height, node_domain, edges
 
     def _get_road_graph(self) -> nx.MultiGraph:
