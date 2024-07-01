@@ -10,6 +10,7 @@ from absl import flags
 from khrylib.utils import *
 from urban_planning.utils.config import Config
 from urban_planning.agents.urban_planning_agent import UrbanPlanningAgent
+from tqdm import trange
 
 # flags.DEFINE_string('root_dir', '/data1/mas/zhengyu/drl_urban_planning/', 'Root directory for writing '
 #                                                                           'logs/summaries/checkpoints.')
@@ -47,7 +48,6 @@ FLAGS: {
 """
 
 def train_one_iteration(agent: UrbanPlanningAgent, iteration: int) -> None:
-    print(iteration)
     """Train one iteration"""
     agent.optimize(iteration)
     agent.save_checkpoint(iteration)
@@ -103,7 +103,7 @@ def main_loop(_):
         # default: skip
         if cfg.skip_land_use:
             agent.freeze_land_use()
-        for iteration in range(start_iteration, cfg.max_num_iterations):
+        for iteration in trange(start_iteration, cfg.max_num_iterations):
             train_one_iteration(agent, iteration)
 
     agent.logger.info('training done!')

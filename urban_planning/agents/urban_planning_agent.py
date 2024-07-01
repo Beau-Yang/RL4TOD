@@ -59,7 +59,7 @@ class UrbanPlanningAgent(AgentPPO):
                 every step: choose action according to the current state
                 every step: get (next state, reward, info)
                 every step: logger_messages add new message
-                every step: memory_messages
+                every step: memory_messages add new message
                 if done, break
             if done
                 episode_len = 0
@@ -109,10 +109,14 @@ class UrbanPlanningAgent(AgentPPO):
                 logger.start_episode(self.env)
                 for var in range(len(logger_messages)):
                     # self.episode_len += 1
+                    # self.episode_reward += reward
+                    # self.stats_loggers['reward'].log(reward)
+                    # ==> logger.step(self.env, reward, info)
                     logger.step(self.env, *logger_messages[var])
                     self.push_memory(memory, *memory_messages[var])
                 # self.num_steps += self.episode_len
                 # self.num_episodes += 1
+                # episode_len, episode_reward, road_network, life_circle, greenness
                 logger.end_episode(last_info)
                 self.thread_loggers[pid].info('worker {} finished episode {}.'.format(pid, logger.num_episodes))
                 # print(logger.num_steps)
@@ -269,7 +273,7 @@ class UrbanPlanningAgent(AgentPPO):
         # 500*50=25000
 
         num_samples = self.cfg.num_episodes_per_iteration*self.cfg.max_sequence_length
-        # num_samples = 500
+        num_samples = 500
 
         # states: list [(9), ...] len=batch_
         # actions: nparray (batch_, 2)
@@ -443,11 +447,10 @@ class UrbanPlanningAgent(AgentPPO):
         cfg = self.cfg
         log, log_eval = info['log'], info['log_eval']
         logger, tb_logger = self.logger, self.tb_logger
-        log_str = f'{iteration}\tT_sample {info["T_sample"]:.2f}\tT_update {info["T_update"]:.2f}\t' \
-                  f'T_eval {info["T_eval"]:.2f}\t' \
-                  f'ETA {get_eta_str(iteration, cfg.max_num_iterations, info["T_total"])}\t' \
-                  f'train_R_eps {log.avg_episode_reward + self.reward_offset:.2f}\t'\
-                  f'eval_R_eps {log_eval.avg_episode_reward + self.reward_offset:.2f}\t{cfg.id}'
+
+        log_str = f'\nCommunity: {cfg.id}  Iteration: {iteration}\n' \
+            f'Time Sample: {info["T_sample"]:.2f}s Time Update: {info["T_update"]:.2f}s Time Eval: {info["T_eval"]:.2f}s\n' \
+            f'Train Average Episode Reward: {log.avg_episode_reward + self.reward_offset:.2f} Eval Average Episode Reward: {log_eval.avg_episode_reward + self.reward_offset:.2f}\n'
         logger.info(log_str)
 
         self.current_rewards = log_eval.avg_episode_reward + self.reward_offset

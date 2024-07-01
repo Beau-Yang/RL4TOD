@@ -503,6 +503,17 @@ class CityEnv:
                 self.transition_stage()
             
             # info: road_network, life_circle, greenness, concept
+            """
+            proxy_reward
+            info: {
+                'road_network': -1.0,
+                'life_circle': life_circle,
+                'greenness': greenness,
+                'concept': concept,
+                'life_circle_info': life_circle_info,
+                'concept_info': concept_info
+            }
+            """
             reward, info = self.get_reward_info()
             self._current_land_use, self._current_land_use_mask = self._get_land_use_and_mask()
             if not self._land_use_done and not np.any(self._current_land_use_mask):
