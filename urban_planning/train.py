@@ -1,40 +1,35 @@
-import os
+# import warnings
+
+# warnings.simplefilter(action="ignore", category=FutureWarning)
 import setproctitle
-
-import warnings
-warnings.simplefilter(action='ignore', category=FutureWarning)
-
-from absl import app
-from absl import flags
-
-from khrylib.utils import *
-from urban_planning.utils.config import Config
-from urban_planning.agents.urban_planning_agent import UrbanPlanningAgent
+from absl import app, flags
 from tqdm import trange
 
-# flags.DEFINE_string('root_dir', '/data1/mas/zhengyu/drl_urban_planning/', 'Root directory for writing '
-#                                                                           'logs/summaries/checkpoints.')
-flags.DEFINE_string('root_dir', '/home/yuebing/Yangbo/DRL-urban-planning/', 'Root directory for writing '
-                                                                          'logs/summaries/checkpoints.')
-flags.DEFINE_string('cfg', None, 'Configuration file of rl training.')
-flags.DEFINE_bool('tmp', False, 'Whether to use temporary storage.')
-flags.DEFINE_enum('agent', 'rl-sgnn', ['rl-sgnn', 'rl-mlp'], 'Agent type.')
-flags.DEFINE_bool('separate_train', True, 'Whether to separate the training process of land use and road planning.')
-flags.DEFINE_integer('num_threads', 20, 'The number of threads for sampling trajectories.')
-flags.DEFINE_bool('use_nvidia_gpu', True, 'Whether to use Nvidia GPU for acceleration.')
-flags.DEFINE_integer('gpu_index', 0, 'GPU ID.')
-flags.DEFINE_integer('global_seed', None, 'Used in env and weight initialization, does not impact action sampling.')
-flags.DEFINE_string('iteration', '0', 'The start iteration. Can be number or best. If not 0, the agent will load from '
-                                      'a saved checkpoint.')
-flags.DEFINE_bool('restore_best_rewards', True, 'Whether to restore the best rewards from a saved checkpoint. '
-                                                'True for resume training. False for finetune with new reward.')
+from khrylib.utils import *
+from urban_planning.agents.urban_planning_agent import UrbanPlanningAgent
+from urban_planning.utils.config import Config
+
+flags.DEFINE_string("root_dir", "/home/yuebing/Yangbo/DRL-urban-planning/", "Root directory for writing logs,summaries,checkpoints.")
+flags.DEFINE_string("cfg", None, "Community Configuration file of rl training.")
+flags.DEFINE_bool("tmp", False, "Whether to use temporary storage.")
+flags.DEFINE_enum("agent", "rl-sgnn", ["rl-sgnn", "rl-mlp"], "Agent type.")
+flags.DEFINE_integer("num_threads", 20, "The number of threads for sampling trajectories.")
+flags.DEFINE_bool("use_nvidia_gpu", True, "Whether to use Nvidia GPU for acceleration.")
+flags.DEFINE_integer("gpu_index", 0, "GPU ID.")
+flags.DEFINE_integer("global_seed", None, "Used in env and weight initialization, does not impact action sampling.")
+flags.DEFINE_string("iteration", "0", "The start iteration. Can be number or best. If not 0, the agent will load from a saved checkpoint.")
+flags.DEFINE_bool(
+    "restore_best_rewards",
+    True,
+    "Whether to restore the best rewards from a saved checkpoint. True: resume training; False: finetune with new reward.",
+)
 
 FLAGS = flags.FLAGS
 
 """
 FLAGS: {
     'root_dir': '/data1/mas/zhengyu/drl_urban_planning/', -> /home/yuebing/Yangbo/DRL-urban-planning/
-    'cfg': None,  # hlg
+    'cfg': None,  # hlg/dhm
     'tmp': False,
     'agent': 'rl-sgnn',
     'separate_train': True,
@@ -47,6 +42,7 @@ FLAGS: {
 }
 """
 
+
 def train_one_iteration(agent: UrbanPlanningAgent, iteration: int) -> None:
     """Train one iteration"""
     agent.optimize(iteration)
@@ -57,8 +53,8 @@ def train_one_iteration(agent: UrbanPlanningAgent, iteration: int) -> None:
 
 
 def main_loop(_):
-    # change the process name
-    setproctitle.setproctitle(f'urban_planning_{FLAGS.cfg}_{FLAGS.global_seed}')
+    # set the process name
+    setproctitle.setproctitle(f"RL4TOD_{FLAGS.cfg}_{FLAGS.global_seed}")
 
     cfg = Config(FLAGS.cfg, FLAGS.global_seed, FLAGS.tmp, FLAGS.root_dir, FLAGS.agent)
 
@@ -66,9 +62,9 @@ def main_loop(_):
     torch.set_default_dtype(dtype)
     if FLAGS.use_nvidia_gpu and torch.cuda.is_available():
         # todo: simplify
-        device = torch.device('cuda', index=FLAGS.gpu_index)
+        device = torch.device("cuda", index=FLAGS.gpu_index)
     else:
-        device = torch.device('cpu')
+        device = torch.device("cpu")
     if torch.cuda.is_available():
         torch.cuda.set_device(FLAGS.gpu_index)
     np.random.seed(cfg.seed)
@@ -81,37 +77,30 @@ def main_loop(_):
     # checkpoint: 0
     # restore_best_rewards: True
     # todo: num_threads
-    FLAGS.num_threads=1
-    agent = UrbanPlanningAgent(cfg=cfg, dtype=dtype, device=device, num_threads=FLAGS.num_threads,
-                               training=True, checkpoint=checkpoint, restore_best_rewards=FLAGS.restore_best_rewards)
+    FLAGS.num_threads = 1
+    agent = UrbanPlanningAgent(
+        cfg=cfg,
+        dtype=dtype,
+        device=device,
+        num_threads=FLAGS.num_threads,
+        training=True,
+        checkpoint=checkpoint,
+        restore_best_rewards=FLAGS.restore_best_rewards,
+    )
     # default values:
-    # FLAGS.separate_train: True
     # cfg.skip_land_use: False
     # cfg.skip_road: True
-    if FLAGS.separate_train and not cfg.skip_land_use and not cfg.skip_road:
-        agent.freeze_road()
-        start_iteration = agent.start_iteration
-        for iteration in range(start_iteration, cfg.max_num_iterations):
-            train_one_iteration(agent, iteration)
-
+    start_iteration = agent.start_iteration
+    # default: skip
+    if cfg.skip_land_use:
         agent.freeze_land_use()
-        for iteration in range(cfg.max_num_iterations, 2 * cfg.max_num_iterations):
-            train_one_iteration(agent, iteration)
-    else:
-        # default: this branch
-        start_iteration = agent.start_iteration
-        # default: skip
-        if cfg.skip_land_use:
-            agent.freeze_land_use()
-        for iteration in trange(start_iteration, cfg.max_num_iterations):
-            train_one_iteration(agent, iteration)
+    for iteration in trange(start_iteration, cfg.max_num_iterations):
+        train_one_iteration(agent, iteration)
 
-    agent.logger.info('training done!')
+    agent.logger.info("training done!")
 
 
-if __name__ == '__main__':
-    flags.mark_flags_as_required([
-      'cfg',
-      'global_seed'
-    ])
+if __name__ == "__main__":
+    flags.mark_flags_as_required(["cfg", "global_seed"])
+    app.run(main_loop)
     app.run(main_loop)
