@@ -1,7 +1,8 @@
-import yaml
 import glob
-import pickle
 import os
+import pickle
+
+import yaml
 
 
 def get_file_path(file_path):
@@ -13,14 +14,14 @@ def get_file_path(file_path):
 def load_yaml(file_path):
     file_path = get_file_path(file_path)
     files = glob.glob(file_path, recursive=True)
-    assert(len(files) == 1)
-    cfg = yaml.safe_load(open(files[0], 'r'))
+    assert len(files) == 1
+    cfg = yaml.safe_load(open(files[0], "r"))
     return cfg
 
 
 def load_pickle(file_path):
     file_path = get_file_path(file_path)
     files = glob.glob(file_path, recursive=True)
-    assert(len(files) == 1)
-    data = pickle.load(open(files[0], 'rb'))
+    assert len(files) == 1
+    data = pickle.load(open(files[0], "rb"))
     return data
